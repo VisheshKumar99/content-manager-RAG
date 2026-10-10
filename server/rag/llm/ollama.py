@@ -12,7 +12,8 @@ class OllamaLLM(BaseLLM):
                 "OLLAMA_BASE_URL",
                 "http://localhost:11434/v1"
             ),
-            api_key="ollama"
+            api_key="ollama",
+            timeout=float(os.getenv("OLLAMA_TIMEOUT", "300")),
         )
         self.model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 
@@ -22,7 +23,8 @@ class OllamaLLM(BaseLLM):
             messages=[
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2
+            temperature=0.2,
+            response_format={"type": "json_object"},
         )
 
         return response.choices[0].message.content or ""

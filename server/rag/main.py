@@ -23,7 +23,7 @@ result = promptRectifyPipeline(
     config=config
 )
 
-print(result["storyline"])
+print(result)
 
 for character in result["characters"]:
     print("\nCHARACTER:", character["name"])
@@ -34,6 +34,13 @@ for environment in result["environments"]:
     print(environment["designPrompt"])
 
 for clip in result["clips"]:
-    print(f"\nCLIP {clip['clipNumber']}")
-    print(f"Duration: {clip['durationSeconds']}s")
-    print(clip["videoPrompt"])
+    print(f"\nCLIP {clip['clipNumber']}  ({clip['durationSeconds']}s)")
+    print(f"  Shot:      {clip.get('shotType')}")
+    print(f"  Angle:     {clip.get('cameraAngle')}")
+    print(f"  Movement:  {clip.get('cameraMovement')}")
+    print(f"  Lighting:  {clip.get('lighting')}")
+    print(f"  Emotion:   {clip.get('facialEmotion')}")
+    print(f"  Framing:   {clip.get('composition')}")
+    print(f"  Mood:      {clip.get('mood')}")
+    print(f"  Prompt:    {clip.get('videoPrompt')}")
+    print(f"  Audio:     {clip.get('audioPrompt')}")
