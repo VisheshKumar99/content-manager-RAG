@@ -426,13 +426,54 @@ Return the complete improved JSON object using the OUTPUT SCHEMA.
     return _validate_plan(result, config)
 
 
-def promptRectifyPipeline(prompt: str, config: VideoConfig) -> dict:
+def _noop(_event: dict) -> None:
+    """Default progress callback that does nothing."""
+
+
+def promptRectifyPipeline(prompt: str, config: VideoConfig, on_event=None) -> dict:
     """Generate a plan, then iteratively self-critique and refine it
-    until the LLM approves it or maxIterations is reached."""
+    until the LLM approves it or maxIterations is reached.
+
+    on_event(event: dict) is called at each phase so callers (e.g. the
+    API layer) can persist and stream progress. Event shape:
+        {
+          "phase": "generate" | "critique" | "refine" | "final",
+          "iteration": int,          # 0 for generate, N for loop steps
+          "plan": dict | None,       # current plan after this phase
+          "score": int | None,       # critique score (critique/final)
+          "approved": bool | None,   # critique verdict
+          "issues": list,            # critique issues
+          "message": str,            # human-readable status
+        }
+    """
+
+    emit = on_event or _noop
 
     plan = generatePlan(prompt, config)
+    emit(
+        {
+            "phase": "generate",
+            "iteration": 0,
+            "plan": plan,
+            "score": None,
+            "approved": None,
+            "issues": [],
+            "message": "Initial plan generated.",
+        }
+    )
 
     if not config.refine:
+        emit(
+            {
+                "phase": "final",
+                "iteration": 0,
+                "plan": plan,
+                "score": None,
+                "approved": None,
+                "issues": [],
+                "message": "Refinement disabled; returning initial plan.",
+            }
+        )
         return plan
 
     best_plan = plan
@@ -444,19 +485,40 @@ def promptRectifyPipeline(prompt: str, config: VideoConfig) -> dict:
         try:
             verdict = critiquePlan(plan, config)
         except ValueError as exc:
-            print(f"[refine] iteration {iteration}: critique failed ({exc})")
+            emit(
+                {
+                    "phase": "critique",
+                    "iteration": iteration,
+                    "plan": plan,
+                    "score": best_score,
+                    "approved": None,
+                    "issues": [],
+                    "message": f"Critique failed: {exc}",
+                }
+            )
             break
 
         approved = bool(verdict.get("approved"))
-        issue_count = len(verdict.get("issues", []))
+        issues = verdict.get("issues", [])
+        issue_count = len(issues)
         try:
             score = int(verdict.get("score", 0))
         except (TypeError, ValueError):
             score = 0
 
-        print(
-            f"[refine] iteration {iteration}: "
-            f"approved={approved} score={score} issues={issue_count}"
+        emit(
+            {
+                "phase": "critique",
+                "iteration": iteration,
+                "plan": plan,
+                "score": score,
+                "approved": approved,
+                "issues": issues,
+                "message": (
+                    f"Critique #{iteration}: score {score}, "
+                    f"{issue_count} issue(s), approved={approved}."
+                ),
+            }
         )
 
         # Always keep the highest-scored plan seen so far.
@@ -468,22 +530,49 @@ def promptRectifyPipeline(prompt: str, config: VideoConfig) -> dict:
             break
 
         if iteration == config.maxIterations:
-            print(
-                "[refine] reached maxIterations, "
-                f"returning best plan (score={best_score})"
-            )
             break
 
         # A failed refine (invalid/empty plan) must not discard the
         # good plan we already have. Keep the best and stop.
         try:
             plan = refinePlan(plan, verdict, config)
+            emit(
+                {
+                    "phase": "refine",
+                    "iteration": iteration,
+                    "plan": plan,
+                    "score": None,
+                    "approved": None,
+                    "issues": [],
+                    "message": f"Refined plan after critique #{iteration}.",
+                }
+            )
         except ValueError as exc:
-            print(
-                f"[refine] iteration {iteration}: refine produced an "
-                f"invalid plan ({exc}); keeping best plan "
-                f"(score={best_score})"
+            emit(
+                {
+                    "phase": "refine",
+                    "iteration": iteration,
+                    "plan": best_plan,
+                    "score": best_score,
+                    "approved": None,
+                    "issues": [],
+                    "message": (
+                        f"Refine produced an invalid plan ({exc}); "
+                        "keeping best plan."
+                    ),
+                }
             )
             break
 
+    emit(
+        {
+            "phase": "final",
+            "iteration": config.maxIterations,
+            "plan": best_plan,
+            "score": best_score,
+            "approved": None,
+            "issues": [],
+            "message": f"Final plan selected (best score {best_score}).",
+        }
+    )
     return best_plan
